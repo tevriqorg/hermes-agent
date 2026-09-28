@@ -30,8 +30,8 @@ on:
         type: boolean
         default: false
   pull_request:
-  push:
-    branches: [main]
+  # Fork policy: do not run the upstream full CI on main pushes.
+  # Keep manual, PR, and workflow_call entry points for upstream compatibility.
 
 permissions:
   contents: read

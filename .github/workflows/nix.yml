@@ -12,8 +12,7 @@ name: Nix flake check
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  # Fork policy: do not run the upstream Nix build on main pushes.
   workflow_call:
     inputs:
       release:

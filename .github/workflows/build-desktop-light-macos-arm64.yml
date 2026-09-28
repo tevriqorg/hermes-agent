@@ -63,6 +63,27 @@ jobs:
             --strip-components=1
           node -e "console.log(require.resolve('lucide-react/package.json'))"
 
+      - name: Allow official generated desktop icons during strict build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git update-index --assume-unchanged \
+            apps/desktop/assets/appx/Square150x150Logo-dark.png \
+            apps/desktop/assets/appx/Square150x150Logo.png \
+            apps/desktop/assets/appx/Square44x44Logo-dark.png \
+            apps/desktop/assets/appx/Square44x44Logo.png \
+            apps/desktop/assets/appx/StoreLogo-dark.png \
+            apps/desktop/assets/appx/StoreLogo.png \
+            apps/desktop/assets/appx/Wide310x150Logo-dark.png \
+            apps/desktop/assets/appx/Wide310x150Logo.png \
+            apps/desktop/assets/icon-dark.icns \
+            apps/desktop/assets/icon-dark.ico \
+            apps/desktop/assets/icon-dark.png \
+            apps/desktop/assets/icon-mac.png \
+            apps/desktop/assets/icon.icns \
+            apps/desktop/assets/icon.ico \
+            apps/desktop/assets/icon.png
+
       - name: Build official Light variant
         shell: bash
         run: |

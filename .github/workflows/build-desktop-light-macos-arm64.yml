@@ -1,0 +1,152 @@
+name: Build Hermes Desktop Light macOS arm64 :By ChatGPT
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-desktop-light-macos-arm64.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-light-macos-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Light remote-only client :By ChatGPT
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Confirm Apple Silicon runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          sw_vers
+          uname -a
+
+      - name: Build official Light variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          python3 scripts/bundles/desktop.py --commit="${GITHUB_SHA}" --variant=light
+
+      - name: Collect DMG and ZIP
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          mapfile=()
+          while IFS= read -r -d '' f; do
+            mapfile+=("$f")
+          done < <(find . -type f \( -name '*.dmg' -o -name '*.zip' \) -print0)
+
+          if [ "${#mapfile[@]}" -eq 0 ]; then
+            echo "No DMG/ZIP artifact produced by official Light builder." >&2
+            exit 1
+          fi
+
+          for f in "${mapfile[@]}"; do
+            base="$(basename "$f")"
+            cp "$f" "release-assets/$base"
+          done
+
+          cd release-assets
+          shasum -a 256 * > SHA256SUMS.txt
+          ls -lh
+          cat SHA256SUMS.txt
+
+      - name: Verify remote-only package has no bundled Hermes runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="$(find release-assets -maxdepth 1 -type f -name '*.dmg' | head -n 1 || true)"
+          if [ -z "$dmg" ]; then
+            echo "No DMG available for package inspection." >&2
+            exit 1
+          fi
+
+          mount_dir="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_dir" -quiet 2>/dev/null || true
+            rmdir "$mount_dir" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
+          app="$(find "$mount_dir" -maxdepth 2 -type d -name 'Hermes.app' | head -n 1)"
+          if [ -z "$app" ]; then
+            echo "Hermes.app not found in DMG." >&2
+            exit 1
+          fi
+
+          echo "Inspecting: $app"
+          du -sh "$app"
+
+          # Light is defined upstream as remote-only. Fail if obvious bundled
+          # Python/local-agent payload markers are present.
+          if find "$app/Contents/Resources" -maxdepth 4 \(               -iname 'python' -o               -iname 'python3' -o               -iname 'site-packages' -o               -iname 'hermes-agent' -o               -iname 'payload'             \) -print | grep -q .; then
+            echo "Unexpected bundled runtime marker found in Light package:" >&2
+            find "$app/Contents/Resources" -maxdepth 4 \(               -iname 'python' -o               -iname 'python3' -o               -iname 'site-packages' -o               -iname 'hermes-agent' -o               -iname 'payload'             \) -print >&2
+            exit 1
+          fi
+
+          echo "PASS: no obvious bundled Python/local Hermes runtime markers found."
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hermes-Desktop-Light-macOS-arm64-${{ github.sha }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA:0:7}"
+          tag="desktop-light-macos-arm64-${short}"
+          title="Hermes Desktop Light macOS arm64 ${short} :By ChatGPT"
+
+          notes_file="$(mktemp)"
+          cat > "$notes_file" <<EOF
+          Hermes Desktop Light / remote-only build for Apple Silicon Macs.
+
+          Built from commit: \`${GITHUB_SHA}\`
+          Variant: \`light\`
+          Architecture: \`arm64\`
+          Runner: \`macos-15\`
+
+          This build uses the upstream official Desktop Light variant, which is intended to connect to an existing remote Hermes backend and does not bundle Python or a local Hermes agent runtime.
+
+          This fork build may be unsigned/not notarized unless signing credentials are configured. macOS may therefore require an explicit first-launch approval.
+
+          SHA-256 checksums are attached in \`SHA256SUMS.txt\`.
+
+          :By ChatGPT
+          EOF
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release-assets/* --clobber
+          else
+            gh release create "$tag" release-assets/* \
+              --target "${GITHUB_SHA}" \
+              --title "$title" \
+              --notes-file "$notes_file"
+          fi

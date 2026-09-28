@@ -43,25 +43,21 @@ jobs:
           python3 scripts/bundles/desktop.py --commit="${GITHUB_SHA}" --variant=light
 
       - name: Collect DMG and ZIP
-        id: collect
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-assets
+          shopt -s nullglob
+          artifacts=(apps/desktop/release/*.dmg apps/desktop/release/*.zip)
 
-          mapfile=()
-          while IFS= read -r -d '' f; do
-            mapfile+=("$f")
-          done < <(find . -type f \( -name '*.dmg' -o -name '*.zip' \) -print0)
-
-          if [ "${#mapfile[@]}" -eq 0 ]; then
-            echo "No DMG/ZIP artifact produced by official Light builder." >&2
+          if [ "${#artifacts[@]}" -eq 0 ]; then
+            echo "No DMG/ZIP artifact produced under apps/desktop/release." >&2
+            find apps/desktop/release -maxdepth 1 -type f -print 2>/dev/null || true
             exit 1
           fi
 
-          for f in "${mapfile[@]}"; do
-            base="$(basename "$f")"
-            cp "$f" "release-assets/$base"
+          for f in "${artifacts[@]}"; do
+            cp "$f" "release-assets/$(basename "$f")"
           done
 
           cd release-assets
@@ -87,24 +83,29 @@ jobs:
           trap cleanup EXIT
 
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
-          app="$(find "$mount_dir" -maxdepth 2 -type d -name 'Hermes.app' | head -n 1)"
+          app="$(find "$mount_dir" -maxdepth 2 -type d -name 'Hermes*.app' | head -n 1)"
           if [ -z "$app" ]; then
-            echo "Hermes.app not found in DMG." >&2
+            echo "Hermes app not found in DMG." >&2
             exit 1
           fi
 
           echo "Inspecting: $app"
           du -sh "$app"
 
-          # Light is defined upstream as remote-only. Fail if obvious bundled
-          # Python/local-agent payload markers are present.
-          if find "$app/Contents/Resources" -maxdepth 4 \(               -iname 'python' -o               -iname 'python3' -o               -iname 'site-packages' -o               -iname 'hermes-agent' -o               -iname 'payload'             \) -print | grep -q .; then
+          runtime_hits="$(find "$app/Contents/Resources" -maxdepth 4 \( \
+            -iname 'python' -o \
+            -iname 'python3' -o \
+            -iname 'site-packages' -o \
+            -iname 'agent-payload' \
+          \) -print || true)"
+
+          if [ -n "$runtime_hits" ]; then
             echo "Unexpected bundled runtime marker found in Light package:" >&2
-            find "$app/Contents/Resources" -maxdepth 4 \(               -iname 'python' -o               -iname 'python3' -o               -iname 'site-packages' -o               -iname 'hermes-agent' -o               -iname 'payload'             \) -print >&2
+            printf '%s\n' "$runtime_hits" >&2
             exit 1
           fi
 
-          echo "PASS: no obvious bundled Python/local Hermes runtime markers found."
+          echo "PASS: no bundled Python/local Hermes agent runtime markers found."
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -133,9 +134,9 @@ jobs:
           Architecture: \`arm64\`
           Runner: \`macos-15\`
 
-          This build uses the upstream official Desktop Light variant, which is intended to connect to an existing remote Hermes backend and does not bundle Python or a local Hermes agent runtime.
+          This uses the upstream official Desktop Light variant. It is intended to connect to an existing remote Hermes backend and does not bundle Python or a local Hermes agent runtime.
 
-          This fork build may be unsigned/not notarized unless signing credentials are configured. macOS may therefore require an explicit first-launch approval.
+          This fork build may be unsigned/not notarized unless signing credentials are configured. macOS may require explicit first-launch approval.
 
           SHA-256 checksums are attached in \`SHA256SUMS.txt\`.
 

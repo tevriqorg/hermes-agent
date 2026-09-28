@@ -35,12 +35,40 @@ jobs:
           sw_vers
           uname -a
 
-      - name: Build official Light variant
+      - name: Prepare official Light build
         shell: bash
         run: |
           set -euo pipefail
           python3 --version
-          python3 scripts/bundles/desktop.py --commit="${GITHUB_SHA}" --variant=light
+          python3 scripts/bundles/desktop.py \
+            --commit="${GITHUB_SHA}" \
+            --variant=light \
+            --prepare-only \
+            --work="$PWD/.build/desktop-job" \
+            --cache="$PWD/.cache/desktop-inputs"
+
+      - name: Work around upstream missing lucide-react dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          (
+            cd "$tmp"
+            npm pack lucide-react@1.48.0 --silent
+          )
+          mkdir -p node_modules/lucide-react
+          tar -xzf "$tmp/lucide-react-1.48.0.tgz" \
+            -C node_modules/lucide-react \
+            --strip-components=1
+          node -e "console.log(require.resolve('lucide-react/package.json'))"
+
+      - name: Build official Light variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/bundles/desktop.py \
+            --prepared="$PWD/.build/desktop-job/prepared.json"
 
       - name: Collect DMG and ZIP
         shell: bash

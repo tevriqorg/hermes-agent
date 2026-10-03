@@ -1,0 +1,98 @@
+name: Build Hermes Desktop Bundled macOS arm64 :By ChatGPT
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build bundled local-agent desktop :By ChatGPT
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout current upstream Hermes
+        uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 7533bd2756b9526b52f527f737420a19e57331d7
+          fetch-depth: 0
+
+      - name: Confirm Apple Silicon runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          sw_vers
+          uname -a
+
+      - name: Prepare official bundled build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          python3 scripts/bundles/desktop.py \
+            --commit="7533bd2756b9526b52f527f737420a19e57331d7" \
+            --variant=bundled \
+            --prepare-only \
+            --work="$PWD/.build/desktop-job" \
+            --cache="$PWD/.cache/desktop-inputs"
+
+      - name: Build official bundled variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/bundles/desktop.py \
+            --prepared="$PWD/.build/desktop-job/prepared.json"
+
+      - name: Collect and measure DMG and ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          shopt -s nullglob
+          artifacts=(apps/desktop/release/*.dmg apps/desktop/release/*.zip)
+          if [ "${#artifacts[@]}" -eq 0 ]; then
+            echo "No DMG/ZIP artifact produced." >&2
+            find apps/desktop/release -maxdepth 2 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+          for f in "${artifacts[@]}"; do
+            cp "$f" "release-assets/$(basename "$f")"
+          done
+          cd release-assets
+          shasum -a 256 * > SHA256SUMS.txt
+          ls -lh
+          du -h *
+          cat SHA256SUMS.txt
+
+      - name: Verify bundled package contains local runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="$(find release-assets -maxdepth 1 -type f -name '*.dmg' | head -n 1 || true)"
+          test -n "$dmg"
+          mount_dir="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_dir" -quiet 2>/dev/null || true
+            rmdir "$mount_dir" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
+          app="$(find "$mount_dir" -maxdepth 2 -type d -name 'Hermes*.app' | head -n 1)"
+          test -n "$app"
+          echo "App size:"
+          du -sh "$app"
+          echo "Runtime markers:"
+          find "$app/Contents/Resources" -maxdepth 5 \( -iname 'python' -o -iname 'python3' -o -iname 'site-packages' -o -iname '*payload*' \) -print | head -50 || true
+          test -d "$app/Contents/Resources" 
+
+      - name: Upload bundled artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hermes-Desktop-Bundled-macOS-arm64-7533bd2
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
